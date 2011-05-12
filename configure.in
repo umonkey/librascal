@@ -1,0 +1,485 @@
+# Configuration Script Template.  Public domain.
+# $Id: configure.in 17 2005-04-18 16:30:38Z vhex $
+#
+# vim:ts=2:ss=2:sw=2:nocindent
+#
+# The purpose of this script is to perform basic automatic configuration
+# of the environment in which an application is going to be built.  The
+# result of this script's execution is written to a file named
+# Makedefs.faerion.include, which then needs to be included by all
+# make files.
+#
+# To use this script you need to include it in the beginning of your own
+# `configure' script (during inclusion it proceeds the command line and
+# applies reasonable defaults), then use the following functions in any
+# order and quantity:
+#
+#   find_exe 'varname' 'one' 'two' 'trhee' ...
+#     - looks for the first available executable in the list and
+#       sets the value of the variable to its full path;
+#
+#   find_func 'funcname' [-lib lib lib ...] [-inc hdr hdr ...] ...
+#     - looks for the specified function in specified liraries
+#       additionally to system libraries.  If the function was found,
+#       its name is appended to variable DEFS, with prefix "HAVE_"
+#       added to it.
+#
+#   find_dir 'varname' 'dir1' 'dir2' ...
+#     - looks for listed directories; the existing ones are added
+#       to the named variable, separated by spaces.  You typically
+#       want to add the following two lines:
+#         find_dir INCDIR "$PREFIX/include"
+#         find_dir LIBDIR "$PREFIX/lib"
+#
+#   add_out 'varname'
+#     - include the contents of the variable in the resulting
+#       configuration file.  To include internally defined
+#       variables, you need a `add_out "*"' line somewhere.
+
+# Set the defaults.
+CFLAGS="-W -Wall -Werror -Wstrict-prototypes"
+CXXFLAGS=""
+OPTIONS=""
+PREFIX="/usr/local"
+MDF_LIBCMD="\$(CC) -shared -o \$(PROG) \$(LIBDIR:%=-L%) \$(OBJS) \$(ARCH) \$(LIBS:%=-l%)"
+MDF_SOEXT="so"
+MDF_EXESUF=""
+
+# Configure features.
+MF_STATIC=0
+MF_DEBUG=0
+MF_PROFILE=0
+
+# Store command line arguments.
+MF_ARGS="$*"
+
+# Re-apply last used options.
+if [ "$MF_ARGS" = "--re" ]; then
+  if [ ! -f configure.log ]; then
+    echo "configure.log not found."
+    exit 1
+  fi
+  ARGS="`head -1 configure.log`"
+  echo $ARGS
+  exec $ARGS
+  exit 0
+fi
+
+rm -f configure.log
+
+# Parse command line
+while [ -n "$1" ]; do
+  case "$1" in
+    --clean)
+      echo -n "Cleaning up..."
+      rm -rf configure.log
+      echo " done."
+      exit 0
+      ;;
+    --debug)
+      MF_DEBUG=1
+      ;;
+    --profile)
+      MF_DEBUG=1
+      MF_PROFILE=1
+      ;;
+    --static)
+      MF_STATIC=1
+      ;;
+    --define)
+      shift
+      if [ -z "$1" ]; then echo "What?"; exit 1; fi
+      DEFS="$DEFS $1"
+      ;;
+    --incdir)
+      shift
+      if [ -z "$1" ]; then echo "Where?"; exit 1; fi
+      INCDIR="$INCDIR $1"
+      ;;
+    --libdir)
+      shift
+      if [ -z "$1" ]; then echo "Where?"; exit 1; fi
+      LIBDIR="$LIBDIR $1"
+      ;;
+    --prefix)
+      shift
+      if [ -z "$1" ]; then echo "Where?"; exit 1; fi
+      PREFIX="$1"
+      HAD_PREFIX="yes"
+      ;;
+    --help)
+      echo "The Faerion Team's automatic configuration script."
+      echo "Read the configuration.in file for details about distribution."
+      echo "Usage: configure [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --clean        : removes the generated file"
+      echo "  --debug        : configures for a debug build"
+      echo "  --profile      : configures for a profiling build, this implies --debug"
+      echo "  --define NAME  : adds the specified name[=value] pair to the list of"
+      echo "                   preprocessor definitions"
+      echo "  --incdir NAME  : adds the directory to the include path"
+      echo "  --libdir NAME  : adds the directory to the library path"
+      echo "  --prefix NAME  : changes the installation prefix, also used to look"
+      echo "                   for additional include and library directories"
+      echo "  --melt         : assist in locating internal compiler errors"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "See ./configure --help for details."
+      exit 1
+      ;;
+   esac
+   shift
+done
+
+echo "./configure $MF_ARGS" > configure.log
+
+MDF_TEMPO="`mktemp /tmp/fmd-XXXXXX.o 2>/dev/null`"
+MDF_TEMPC="`mktemp /tmp/fmd-XXXXXX.c 2>/dev/null`"
+MDF_TEMPE="`mktemp /tmp/fmd-XXXXXX.exe 2>/dev/null`"
+
+if [ -z "$MDF_TEMPO" ]; then
+  MDF_TEMPO="/tmp/fmd-$$.o"
+  MDF_TEMPC="/tmp/fmd-$$.c"
+  MDF_TEMPE="/tmp/fmd-$$.exe"
+fi
+
+# Most common defaults
+mdc_init()
+{
+  OSNAME=`uname | tr [A-Z] [a-z]`
+
+  case $OSNAME in
+    darwin)
+      MDF_LIBCMD="\$(CC) -dynamiclib -Wl,-Sn -o \$(PROG) \$(LIBDIR:%=-L%) \$(OBJS) \$(ARCH) \$(LIBS:%=-l%) \$(FRAMEWORKS:%=-framework %) \$(EXPS:%=-exported_symbols_list %)"
+      MDF_SOEXT="dylib"
+      INCDIR="/sw/include"
+      LIBDIR="/sw/lib"
+      if [ "$HAD_PREFIX" != "yes" ]; then
+        PREFIX="/sw/local"
+      fi
+      if [ -z "$MDF_TMP_STATIC" ]; then
+        CFLAGS="$CFLAGS -fPIC"
+      fi
+      ;;
+    mingw*nt*)
+      OSNAME="nt"
+			MDF_EXESUF=".exe"
+      MDF_SOEXT="dll"
+      MDF_SYSLIBS="KERNEL32 MSVCRT"
+      DEFS="$DEFS WIN32_LEAN_AND_MEAN"
+      ;;
+    *)
+      ;;
+  esac
+
+  echo "You are using $OSNAME."
+  DEFS="$DEFS OSNAME=$OSNAME"
+
+  echo -n "Configuration options:"
+
+  if [ "$MF_STATIC" = "1" ]; then
+    echo -n " static"
+    CFLAGS="$CFLAGS -static"
+    OPTIONS="$OPTIONS static"
+  fi
+
+  if [ "$MF_DEBUG" = "1" ]; then
+    echo -n " debug"
+    DEFS="$DEFS _DEBUG"
+    CFLAGS="$CFLAGS -O0 -g -pipe"
+    OPTIONS="$OPTIONS debug"
+  else
+	  echo -n " release"
+    CFLAGS="$CFLAGS -O3 -fomit-frame-pointer -finline-functions"
+  fi
+
+  if [ "$MF_PROFILE" = "1" ]; then
+    echo -n " profile"
+    CFLAGS="$CFLAGS -pg"
+    OPTIONS="$OPTIONS profile"
+  fi
+
+  echo "."
+}
+
+
+# Syntax: find_exe var_name exe_names...
+find_exe()
+{
+  VAR=$1
+  shift
+
+  while [ -n "$1" ]; do
+    echo -n "Looking for $1..."
+    TMP="`which $1 2>/dev/null`"
+    if [ -n "$TMP" -a -x "$TMP" ]; then
+      echo " found!"
+      eval $VAR=\'$1\' # was "$TMP"
+      return
+    else
+      echo " none."
+    fi
+    shift
+  done
+
+  unset $VAR
+  return
+}
+
+
+# Syntax: find_func func_name [lib_name]
+find_func()
+{
+	rc=1
+  mode="lib"
+  func="$1"
+  name="$1"
+  code=""
+  comp="$CC -x c -o $MDF_TEMPO $MDF_TEMPC"
+  hdrs=""
+
+  echo -n "" > $MDF_TEMPC
+
+  while [ -n "$2" ]; do
+    case "$2" in
+      -lib)
+        mode="lib"
+  ;;
+      -inc)
+  mode="inc"
+  ;;
+      *)
+  if [ "$mode" = "lib" ]; then
+    comp="$comp -l$2"
+  fi
+  if [ "$mode" = "inc" ]; then
+    echo "#include <$2>" >> $MDF_TEMPC
+          hdrs="$hdrs""h"
+        fi
+  ;;
+    esac
+    shift
+  done
+
+  for i in $LIBS; do
+    comp="$comp -l$i"
+  done
+
+  for i in $FRAMEWORKS; do
+    comp="$comp -framework $i"
+  done
+
+  if [ -z "$hdrs" ]; then
+    echo "extern int $func(void);" >> $MDF_TEMPC
+  fi
+
+  echo "int main(int argc, const char **argv) { return (int)&$func; }" >> $MDF_TEMPC
+
+  echo -n "Looking for $name()..."
+  sed -e 's/^/find_func: > /g' < $MDF_TEMPC >> configure.log
+  echo "find_func: \$ $comp" >> configure.log
+  $comp > $MDF_TEMPE 2>&1
+  if [ "$?" = "0" ]; then
+    DEFS="$DEFS HAVE_$func"
+		eval HAVE_$func="yes"
+    echo " found!"
+    echo "find_func: funciton $func found." >> configure.log
+		rc=0
+  else
+    echo " none."
+    echo "find_func: funciton $func not found, compiler log follows." >> configure.log
+    sed -e 's/^/find_func: > /g' < $MDF_TEMPE >> configure.log
+  fi
+  echo "find_func:" >> configure.log
+	return $rc
+}
+
+
+# Syntax: find_lib lib
+find_lib()
+{
+	rc=1
+  comp="$CC -x c -o $MDF_TEMPO $MDF_TEMPC -l$1"
+  echo -n "int main(int argc, const char **argv) { return 1; }" > $MDF_TEMPC
+
+  for i in $LIBS; do
+    comp="$comp -l$i"
+  done
+
+  echo -n "Looking for lib$1..."
+  sed -e 's/^/find_lib: > /g' < $MDF_TEMPC >> configure.log
+  echo "find_lib: \$ $comp" >> configure.log
+  $comp > $MDF_TEMPE 2>&1
+  if [ "$?" = "0" ]; then
+    LIBS="$LIBS $1"
+    DEFS="$DEFS HAVE_lib$1"
+    echo " found!"
+    echo "find_lib: library $1 found." >> configure.log
+		rc=0
+  else
+    echo " none."
+    echo "find_lib: library $1 not found, compiler log follows." >> configure.log
+    sed -e 's/^/find_lib: > /g' < $MDF_TEMPE >> configure.log
+  fi
+  echo "find_lib:" >> configure.log
+	return $rc
+}
+
+
+# Syntax: find_framework name
+find_framework()
+{
+	rc=1
+
+  if [ "$OSNAME" != "darwin" ]; then
+    return $rc
+  fi
+
+  comp="$CC -x c -o $MDF_TEMPO $MDF_TEMPC -framework $1"
+  echo -n "int main(int argc, const char **argv) { return 1; }" > $MDF_TEMPC
+
+  echo -n "Looking for the $1 framework..."
+  sed -e 's/^/find_framework: > /g' < $MDF_TEMPC >> configure.log
+  echo "find_framework: \$ $comp" >> configure.log
+  $comp > $MDF_TEMPE 2>&1
+  if [ "$?" = "0" ]; then
+    FRAMEWORKS="$FRAMEWORKS $1"
+    echo " found!"
+    echo "find_framework: framework $1 found." >> configure.log
+    for i in /Library/Frameworks; do
+      if [ -d $i/$1.framework/Headers ]; then
+        INCDIR="$INCDIR $i/$1.framework/Headers"
+				DEFS="$DEFS HAVE_$1"
+				eval HAVE_$1="yes"
+				rc=0
+				break
+      fi
+    done
+  else
+    echo " none."
+    echo "find_framework: framework $1 not found, compiler log follows." >> configure.log
+    sed -e 's/^/find_framework: > /g' < $MDF_TEMPE >> configure.log
+  fi
+  echo "find_framework:" >> configure.log
+	return $rc
+}
+
+
+# Syntax: find_dir var_name path [path...]
+find_dir()
+{
+  var_name="$1"
+  shift
+
+  while [ -n "$1" ]; do
+    echo -n "Looking for $1..."
+    if [ -d "$1" ]; then
+      echo " found!"
+      eval tmp="\$$var_name"
+      eval $var_name=\'$tmp $1\'
+    else
+      echo " none."
+    fi
+    shift
+  done
+}
+
+
+# Syntax: add_out var_name
+add_out()
+{
+  if [ "$2" = "*" ]; then
+    add_out $1 CC
+    add_out $1 CFLAGS
+    add_out $1 CPP
+    add_out $1 CXXFLAGS
+    add_out $1 DEFS
+    add_out $1 FRAMEWORKS
+    add_out $1 INCDIR
+    add_out $1 LIBDIR
+    add_out $1 LIBS
+    add_out $1 MDF_7Z
+    add_out $1 MDF_EXESUF
+    add_out $1 MDF_GNUPG
+    add_out $1 MDF_LIBCMD
+    add_out $1 MDF_SOEXT
+    add_out $1 MDF_XSLTPROC
+		add_out $1 MK
+    add_out $1 OSNAME
+    add_out $1 OPTIONS
+    add_out $1 PREFIX
+    add_out $1 RC
+  else
+    eval tmp=\$$2
+    if [ -n "$tmp" ]; then
+      echo "$2 = $tmp" | sed -e 's/  */ /g' >> $1
+    fi
+  fi
+}
+
+
+out_makefile()
+{
+  fname=$1
+  cat > $fname << _EOF_
+# This is an automatically generated file. You are likely to
+# want this file included in your GNUmakefiles before defining
+# any processing rules. This is the right place to add
+# additional definitions, such as _DEBUG, though keep in mind
+# that these options are overwritten each time you reconfigure
+# or make clean.
+#
+_EOF_
+
+  while [ -n "$2" ]; do
+    add_out $fname "$2"
+    shift
+  done
+
+  rm -f $MDF_TEMPO $MDF_TEMPC $MDF_TEMPE && echo "Removed the temporary directory." || echo "Could not remove temporary directory ($MDF_TEMPDIR)."
+  echo "Wrote $fname"
+}
+
+
+out_include()
+{
+  fname=$1
+  cmdline=`head -1 configure.log`
+  seed=`date +'%Y%m%dT%H%M%S'`
+
+	shift
+
+  if [ -z "$cmdline" ]; then cmdline="unknown"; fi
+  cat > $fname.tmp << _EOF_
+/*
+ * This file was automatically generated on `date +'%Y/%m/%d at %H:%M:%S'`.
+ * Command line: $cmdline
+ */
+#ifndef __makedefs_configure_output_h_$seed
+# define __makedefs_configure_output_h_$seed
+_EOF_
+
+  for i in $DEFS; do
+    echo "# define $i" >> $fname.tmp
+  done
+
+	while [ -n "$1" ]; do
+		eval val=\$$1
+		echo "# define $1 \"$val\"" >> $fname.tmp
+		shift
+	done
+
+  echo "#endif /* __makedefs_configure_output_h_$seed */" >> $fname.tmp
+
+  sed -e 's/=\(.*$\)/ "\1"/g' $fname.tmp > $fname
+  rm $fname.tmp
+  echo "Wrote $fname"
+	DEFS="HAVE_configure_h"
+	CFLAGS="$CFLAGS -include '`pwd`/configure.h'"
+}
+
+
+mdc_init

@@ -1,0 +1,12 @@
+// RASCAL: Realtime Asynchronous Connection Abstraction Layer.
+// Copyright (c) 2003-2004 hex@faerion.oss
+// Distributed under the terms of GNU LGPL, read 'LICENSE'.
+//
+// $Id: test-03.rc 3 2006-12-16 00:47:17Z justin.forest $
+
+#define INTERNAL_NAME "rascal-test-03"
+#define ORIGINAL_FILENAME "test-02.exe"
+#define X0419_DESCRIPTION "RASCAL: тест DNS подсистемы"
+#define X0409_DESCRIPTION "RASCAL: the DNS subsystem test"
+
+#include "../../common/rascal.rc"

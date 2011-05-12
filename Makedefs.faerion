@@ -1,0 +1,281 @@
+# Makefile defaults for GNU Make.  Public domain.
+# Detailed documentation and updates are available at the following locations:
+#
+#   http://faerion.sourceforge.net/makedefs.html.var
+#
+# $makedefs: Makedefs.faerion 11 2005-02-02 20:10:28Z hex $
+
+### PHASE ZERO.  Read user settings and apply defaults.
+
+MDF_SOEXT ?= so
+DISTMASK ?= *.h *.c *.cc *.css *.docbook *.dtd *.exp GNUmakefile Makefile
+DISTLIST += Makedefs.faerion GNUmakefile configure configure.in LICENSE exports
+WORKLIST += $(wildcard $(OBJS) $(PROG) $(PROG).def $(PROG).a .docbook.paged .depend)
+
+ifndef OSNAME
+  ifdef WINDIR
+    OSNAME := nt
+  endif
+endif
+
+### PHASE ONE.  Setup.
+
+# Make sure only one valid target is specified.
+TARGET := $(firstword $(filter library.static library.shared executable docbook.single docbook.paged,$(TARGET)))
+
+# Force (re)compilation of a certain unit.
+ifneq ($(COMPILE),)
+  SRCS = $(COMPILE)
+endif
+
+# First the docbook (its unlike anything else), then the rest.
+ifneq ($(filter docbook.single docbook.paged,$(TARGET)),)
+  ifeq ($(DOCBOOKPATH),)
+    $(error The DOCBOOKPATH environment variable is not set.)
+  else
+    DOCBOOKPATH := $(firstword $(DOCBOOKPATH))
+  endif
+  # Temporary files.
+  WORKLIST += $(wildcard $(_OBJDIR)/*)
+  # Convert the list in DEF to xsltproc switches.
+  DOCBOOKPARA := $(foreach OPT,$(DEFS),--stringparam $(wordlist 1, 2,$(subst =, ,$(OPT)) yes))
+  # Find the output directory.
+  ifeq ($(_OBJDIR),)
+    _OBJDIR := html
+  endif
+  # Make sure only one input file is specified.
+  SRCS := $(firstword $(SRCS))
+  PROG := $(TARGET)
+else
+  # Default to aggressive mode (no warnings).
+  CFLAGS += $(INCDIR:%=-I%) $(DEFS:%=-D%)
+  # Linking a static library.
+  ifeq ($(TARGET),library.static)
+  endif
+  # Linking a dynamic library.
+  ifeq ($(TARGET),library.shared)
+    LINK = $(MDF_LIBCMD)
+  endif
+  # Linking an executable.
+  ifeq ($(TARGET),executable)
+    LINK = $(CC) $(strip -o $(PROG) $(CFLAGS) $(LIBDIR:%=-L%) $(OBJS) $(ARCH) $(LIBS:%=-l%) $(FRAMEWORKS:%=-framework %))
+  endif
+  # Strip everything if not debugging.
+  ifeq ($(filter debug,$(OPTIONS)),)
+    ifeq (executable,$(TARGET))
+      POSTBUILD += strip
+    endif
+  endif
+  # Windows-specific directives.
+  ifeq ($(OSNAME),nt)
+    ifneq ($(filter windows,$(OPTIONS)),)
+      CFLAGS += -windows
+      LFLAGS += -windows
+    endif
+  endif
+  # Find the output directory.
+  ifeq ($(_OBJDIR),)
+    _OBJDIR := .
+  endif
+  # Compose the list of object files.
+  OBJS := $(sort $(patsubst %.c,$(_OBJDIR)/%.o,$(filter %.c,$(SRCS))) \
+          $(patsubst %.cc,$(_OBJDIR)/%.o,$(filter %.cc,$(SRCS))) \
+          $(patsubst %.rc,$(_OBJDIR)/%.res,$(filter %.rc,$(SRCS))))
+endif
+
+# Finally, prevent unobvious "incomplete" builds.
+ifeq ($(TARGET),)
+  PROG :=
+endif
+
+
+### PHASE TWO.  Building.
+
+
+# Generic wrapper.
+all: subdirs $(PREBUILD) prebuild $(PROG) $(POSTBUILD)
+
+
+# Build required subdirectories.
+prebuild:
+  ifneq ($(OBJS)$(PROG),)
+	@for i in $(sort $(_OBJDIR) $(dir $(OBJS) $(PROG))); do [ -d $$i ] || (echo "Creating directory $$i"; mkdir -p $$i); done
+  endif
+  ifneq ($(PROG),)
+    ifeq ($(wildcard .depend),)
+	$(MAKE) depend
+	if [ ! -f .depend ]; then touch .depend; fi
+	@echo "Dependency information has been gathered."
+    endif
+  endif
+
+
+# Build subdirectories recursively.
+subdirs:
+  ifneq ($(DIRS),)
+	for i in $(DIRS); do $(MAKE) -C $$i || exit 1; done
+  endif
+
+
+# Build the normal docbook.
+ifeq ($(TARGET),docbook.single)
+docbook.single: $(_OBJDIR)/$(SRCS:%.docbook=%.html)
+
+$(_OBJDIR)/$(SRCS:%.docbook=%.html): $(SRCS)
+	xsltproc $(strip --nonet --output $(_OBJDIR)/$(DOCNAME).html $(DOCBOOKPARA) $(DOCBOOKPATH)/$(DOCBOOK)/docbook.xsl $(filter %.xml %.docbook,$(SRCS)))
+  ifneq ($(DOCSUPP),)
+	cp -f $(DOCSUPP) $(_OBJDIR)/
+  endif
+endif
+
+
+# Build the chunked docbook.
+docbook.paged: .docbook.paged
+
+.docbook.paged: $(SRCS) $(DOCSUPP) $(DEPS)
+  ifneq ($(WORKLIST),)
+	rm -f $(WORKLIST)
+  endif
+	xsltproc $(strip --nonet --output $(_OBJDIR)/ $(DOCBOOKPARA) $(DOCBOOKPATH)/$(DOCBOOK)/chunk.xsl $(filter %.xml %.docbook,$(SRCS)))
+  ifneq ($(DOCSUPP),)
+	cp -f $(DOCSUPP) $(_OBJDIR)/
+  endif
+	touch $@
+
+
+# Build a static archive.
+ifeq (library.static,$(TARGET))
+  $(PROG): $(OBJS)
+	ar -cur $(strip $(PROG) $(OBJS))
+    ifeq ($(COMPILE),)
+	ranlib $(PROG)
+	ls -ld $(PROG)
+    endif
+  endif
+
+
+# Build a shared library.
+ifeq (library.shared,$(TARGET))
+$(PROG): $(OBJS) $(ARCH) $(EXPS)
+  ifeq ($(COMPILE),)
+    ifeq ($(OSNAME),nt)
+	rm -f $(PROG).def $(PROG).a
+    endif
+	$(strip $(LINK))
+	ls -ld $(PROG)
+    ifeq ($(OSNAME),nt)
+	dlltool $(strip -z $(PROG).def -l $(PROG).a -D $(PROG) $(OBJS) $(ARCH))
+    endif
+  endif
+endif
+
+
+# Build an executable.
+ifeq (executable,$(TARGET))
+$(PROG): $(OBJS) $(ARCH)
+  ifeq ($(COMPILE),)
+	$(LINK)
+	ls -ld $(PROG)
+  endif
+endif
+
+
+# Build dependencies.
+depend::
+  ifneq ($(filter %.c %.cc %.rc,$(SRCS)),)
+	rm -f .depend
+    ifneq ($(filter %.c %.cc,$(SRCS)),)
+	$(strip $(CC) $(strip $(CFLAGS) -MM $(sort $(filter %.c %.cc,$(SRCS)))) | sed -e 's#^\([^:]*\): \([a-zA-Z0-9_]*/\)*#$$(_OBJDIR)/\2\1: \2#' >> .depend)
+    endif
+    ifneq ($(filter %.rc,$(SRCS)),)
+      ifneq ($(CPP),)
+	$(strip $(CPP) -MM $(strip $(filter %.rc,$(SRCS)) \
+            $(INCDIR:%=-I%) $(DEFS:%=-D%)) |\
+            sed -e 's#^\(.*\)\.o: \(\w*/\)*#$$(_OBJDIR)/\2\1.res: \2#' >> .depend)
+      endif
+    endif
+  endif
+  ifneq ($(DIRS),)
+	for i in $(DIRS); do $(MAKE) -C $$i depend; done
+  endif
+
+
+# Remove temporary files.
+clean:: $(custom-clean)
+  ifneq ($(DIRS),)
+	for i in $(DIRS); do $(MAKE) -C $$i clean; done
+  endif
+  ifneq ($(WORKLIST),)
+	rm -f $(WORKLIST)
+  endif
+
+# Remove object files (used with make rebuild)
+clean-objs::
+  ifneq ($(DIRS),)
+	for i in $(DIRS); do $(MAKE) -C $$i clean-objs; done
+  endif
+  ifneq ($(OBJS),)
+	rm -f $(strip $(OBJS) $(PROG))
+  endif
+
+# Remove temporary files irrecursively.
+distclean-local::
+  ifneq ($(DIRS),)
+	for i in $(DIRS); do $(MAKE) -C $$i distclean; done
+  endif
+	rm -rf $(strip $(WORKLIST) Makedefs.faerion.include configure.log)
+
+distclean:: distclean-local $(custom-distclean)
+
+distclean:: distclean-local $(custom-distclean)
+
+exportable-local::
+  ifneq ($(wildcard .svn CVS),)
+	rm -rf $(wildcard .svn CVS)
+  endif
+
+exportable:: exportable-local distclean
+  ifneq ($(DIRS),)
+	for i in $(DIRS); do $(MAKE) -C $$i exportable; done
+  endif
+
+# Rebuild everything.
+rebuild:: clean-objs all
+
+
+# Strip debugging symbols.
+strip:
+	strip $(PROG)
+
+# Source code distribution package.
+dist-default:
+ifeq ($(VERSION),)
+	$(error The VERSION variable is not set.)
+endif
+ifeq ($(PACK),)
+	$(error The PACK variable is not set.)
+endif
+	rm -rf $(PACK)-$(VERSION) $(PACK)-$(VERSION)-src.tar.gz
+	mkdir -p $(PACK)-$(VERSION)
+	find . -type f \( -name Makedefs.faerion $(foreach MASK,$(DISTMASK),-o -name "$(MASK)") \) | grep -vF 'configure.h' | xargs tar cf tmp.tar $(wildcard $(DISTLIST))
+	cd $(PACK)-$(VERSION) && tar xf ../tmp.tar && cd .. && tar cfz $(PACK)-$(VERSION)-src.tar.gz $(PACK)-$(VERSION)
+	rm -rf tmp.tar $(PACK)-$(VERSION)
+	ls -ld $(PACK)-$(VERSION)-src.tar.gz
+
+# Source building rules.
+.SUFFIXES: .o .c .cc .res .rc
+
+$(_OBJDIR)/%.o: %.c
+	$(CC) $(strip $(CFLAGS)) -o $@ -c $<
+
+$(_OBJDIR)/%.o: %.cc
+	$(CC) -x c++ $(strip $(CFLAGS) $(CXXFLAGS)) -o $@ -c $<
+
+$(_OBJDIR)/%.res: %.rc
+  ifneq ($(RC),)
+	$(RC) --use-temp-file $(strip -O COFF $(DEFS:%=-D%) $< $@)
+  endif
+
+
+# Read dependencies.
+-include .depend

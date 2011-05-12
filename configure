@@ -1,0 +1,44 @@
+#!/bin/sh
+# vim:ts=2:sts=2:sw=2:noet
+
+. "./configure.in"
+if [ -f "$HOME/.makedefs" ]; then . "$HOME/.makedefs"; fi
+
+find_exe "CC" "cc" "gcc" "mingw32-gcc"
+find_exe "MK" "gmake" "make"
+find_exe "RC" "windres"
+find_exe "CPP" "cpp -E"
+find_exe "MDF_GNUPG" "gpg"
+find_exe "MDF_XSLTPROC" "xsltproc"
+find_dir INCDIR "$PREFIX/include"
+find_dir LIBDIR "$PREFIX/lib"
+find_framework FaerionLog || find_lib flog
+if [ "$MF_DMALLOC" = "1" ]; then
+	find_lib dmallocthcxx
+fi
+if [ "$OSNAME" != "nt" ]; then
+	find_func kqueue
+	find_func res_init resolv -inc "sys/types.h" "netinet/in.h" "resolv.h"
+fi
+find_func arc4random
+find_func strlcat
+find_func strlcpy
+
+if [ "$OSNAME" = "nt" ]; then
+  MDF_LIBARCH="nt"
+else
+  MDF_LIBARCH="bsd"
+fi
+
+VERSION="1.0"
+VERSION_NUM="1,0,0,0"
+DEFS="$DEFS VERSION=$VERSION VERSION_NUM=$VERSION_NUM"
+
+out_include "configure.h"
+out_makefile "Makedefs.faerion.include" "*" "MDF_LIBARCH" "VERSION" "VERSION_NUM"
+
+cat << END
+
+Build command: $MK.
+      Targets: all depend dist distclean.
+END
